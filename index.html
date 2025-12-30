@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Shelf Analysis Mobile (Fixed)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { touch-action: manipulation; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 h-screen w-screen overflow-hidden relative text-white">
+
+    <script>
+        // ★ここに新しいAPIキーを入れてください
+        const DEFAULT_API_KEY = ""; 
+        
+        // GASのURL
+        const GAS_DEPLOY_URL = "https://script.google.com/macros/s/AKfycbxuWQQ7eAGRgsj8rMtFeop1PwgG0SEde7xUzTMZmzY-aKV9RA2wcB60oOOfbAjn9PQ/exec"; 
+    </script>
+    <video id="camera-feed" autoplay playsinline class="absolute top-0 left-0 w-full h-full object-cover z-0"></video>
+
+    <div class="absolute inset-0 z-10 flex flex-col justify-between pointer-events-none">
+        <div class="p-4 bg-gradient-to-b from-black/60 to-transparent pointer-events-auto flex justify-between items-center">
+            <h1 class="text-lg font-bold tracking-wider">SHELF SCAN HD</h1>
+            <div class="flex gap-2">
+                <button onclick="clearCache()" class="text-xs bg-red-500/80 px-3 py-1 rounded-full">リセット</button>
+                <button onclick="toggleSettings()" class="text-xs bg-white/20 px-3 py-1 rounded-full">設定</button>
+            </div>
+        </div>
+
+        <div class="p-6 pb-12 w-full flex flex-col items-center bg-gradient-to-t from-black/80 to-transparent pointer-events-auto">
+            <p id="status-msg" class="text-sm text-gray-300 mb-4 font-mono text-center min-h-[1.5em]"></p>
+            <button id="shutter-btn" onclick="captureAndAnalyze()" 
+                class="w-20 h-20 rounded-full border-4 border-white bg-white/20 active:bg-white/50 transition-all transform active:scale-95 shadow-lg flex items-center justify-center">
+                <div class="w-16 h-16 bg-white rounded-full"></div>
+            </button>
+        </div>
+    </div>
+
+    <div id="result-modal" class="absolute inset-0 z-20 hidden flex flex-col justify-end">
+        <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" onclick="closeModal()"></div>
+        <div class="glass-panel text-gray-900 rounded-t-3xl p-6 h-[85vh] w-full relative transform transition-transform duration-300 translate-y-0 overflow-hidden flex flex-col">
+            <div class="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-6"></div>
+            <div class="flex justify-between items-end mb-4">
+                <h2 class="text-2xl font-bold">解析結果</h2>
+                <span id="item-count" class="text-sm text-gray-500 font-mono">0 Items</span>
+            </div>
+            <div id="result-content" class="flex-1 overflow-y-auto space-y-3 pb-20"></div>
+            <div class="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-white via-white to-transparent">
+                <button onclick="closeModal()" class="w-full bg-gray-900 text-white py-4 rounded-xl font-bold shadow-lg active:scale-[0.98] transition-transform">閉じて撮影に戻る</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="hidden absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-6">
+        <div class="bg-white text-gray-900 p-6 rounded-2xl w-full max-w-sm">
+            <h3 class="font-bold text-lg mb-4">API設定</h3>
+            <label class="block text-xs mb-1">Gemini API Key</label>
+            <input type="password" id="input-api-key" class="w-full border p-2 rounded mb-4 text-sm">
+            <div class="flex gap-2">
+                <button onclick="saveSettings()" class="flex-1 bg-blue-600 text-white py-2 rounded">保存</button>
+                <button onclick="document.getElementById('settings-modal').classList.add('hidden')" class="flex-1 bg-gray-200 py-2 rounded">キャンセル</button>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="capture-canvas" class="hidden"></canvas>
+
+    <script>
+        const video = document.getElementById('camera-feed');
+        const canvas = document.getElementById('capture-canvas');
+        const statusMsg = document.getElementById('status-msg');
+        
+        // ★修正点1: LocalStorageよりもコード内の定数を優先するロジックに変更（トラブル防止）
+        let GEMINI_API_KEY_VAL = localStorage.getItem('GEMINI_API_KEY') || DEFAULT_API_KEY;
+        let GAS_DEPLOY_URL_VAL = localStorage.getItem('GAS_DEPLOY_URL') || GAS_DEPLOY_URL;
+
+        // ★修正点2: 高画質化 (Full HD優先)
+        async function initCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: "environment",
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                statusMsg.innerText = "カメラ準備OK (高画質)";
+            } catch (err) {
+                console.error("Camera Error:", err);
+                statusMsg.innerHTML = "<span class='text-red-400'>カメラ起動エラー。<br>HTTPSで接続してください。</span>";
+            }
+        }
+
+        async function captureAndAnalyze() {
+            if (!GEMINI_API_KEY_VAL || GEMINI_API_KEY_VAL.includes("YOUR_")) {
+                alert("APIキーが正しく設定されていません。コード内を編集するか設定画面から入力してください。");
+                toggleSettings();
+                return;
+            }
+
+            statusMsg.innerText = "解析中...";
+            document.getElementById('shutter-btn').disabled = true;
+            document.getElementById('shutter-btn').classList.add('opacity-50', 'animate-pulse');
+
+            try {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+
+                const resultJson = await callGemini(base64Image);
+                showResults(resultJson);
+                sendToGAS(base64Image, JSON.stringify(resultJson));
+
+            } catch (error) {
+                console.error(error);
+                statusMsg.innerHTML = `<span class='text-red-400'>エラー: ${error.message}</span>`;
+                if(error.message.includes('403')) {
+                    alert("アクセス権限エラー(403)。APIキーが間違っているか、無効です。右上の「リセット」ボタンを押してみてください。");
+                }
+            } finally {
+                statusMsg.innerText = "待機中";
+                document.getElementById('shutter-btn').disabled = false;
+                document.getElementById('shutter-btn').classList.remove('opacity-50', 'animate-pulse');
+            }
+        }
+
+        async function callGemini(base64Image) {
+            // ★修正点3: モデル名を正しいものに変更
+            const model = "gemini-1.5-flash"; 
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY_VAL}`;
+
+            const promptText = `
+            この画像はスーパーの商品棚です。認識できる全商品をリストアップしてください。
+            以下のJSON形式のみを返してください。マークダウンは不要です。
+            [ { "name": "商品名", "price": "価格(なければ不明)", "condition": "OK" または "乱れあり" } ]
+            `;
+
+            const body = {
+                contents: [{
+                    parts: [
+                        { text: promptText },
+                        { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+                    ]
+                }],
+                generationConfig: { response_mime_type: "application/json" }
+            };
+
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+
+            if (!response.ok) throw new Error(`API Error: ${response.status}`);
+            const data = await response.json();
+            const text = data.candidates[0].content.parts[0].text;
+            return JSON.parse(text);
+        }
+
+        function showResults(data) {
+            const container = document.getElementById('result-content');
+            container.innerHTML = '';
+            let messyCount = 0;
+            data.forEach(item => {
+                const isMessy = item.condition === "乱れあり";
+                if(isMessy) messyCount++;
+                const html = `
+                <div class="bg-gray-100 p-4 rounded-xl flex justify-between items-center ${isMessy ? 'border-l-4 border-red-500 bg-red-50' : ''}">
+                    <div><div class="font-bold text-gray-800">${item.name}</div><div class="text-sm text-gray-500">${item.price}</div></div>
+                    <div class="text-right"><span class="px-3 py-1 rounded-full text-xs font-bold ${isMessy ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'}">${item.condition}</span></div>
+                </div>`;
+                container.innerHTML += html;
+            });
+            document.getElementById('item-count').innerText = `${data.length} Items`;
+            document.getElementById('result-modal').classList.remove('hidden');
+        }
+
+        async function sendToGAS(image, resultText) {
+            if (!GAS_DEPLOY_URL_VAL || GAS_DEPLOY_URL_VAL.includes("script.google.com") === false) return;
+            const payload = { image: image, analysisResult: resultText, timestamp: new Date().toISOString() };
+            fetch(GAS_DEPLOY_URL_VAL, {
+                method: "POST",
+                mode: "no-cors", 
+                headers: { "Content-Type": "text/plain" },
+                body: JSON.stringify(payload)
+            }).then(() => {
+                const toast = document.createElement("div");
+                toast.className = "absolute top-20 left-1/2 transform -translate-x-1/2 bg-black/80 text-white px-4 py-2 rounded-full text-xs shadow-lg";
+                toast.innerText = "クラウドへ保存しました";
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 3000);
+            }).catch(e => console.error("GAS Error", e));
+        }
+
+        function closeModal() {
+            document.getElementById('result-modal').classList.add('hidden');
+            initCamera();
+        }
+
+        function toggleSettings() {
+            const modal = document.getElementById('settings-modal');
+            const inputApi = document.getElementById('input-api-key');
+            if (modal.classList.contains('hidden')) {
+                inputApi.value = GEMINI_API_KEY_VAL;
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+
+        function saveSettings() {
+            const apiKey = document.getElementById('input-api-key').value;
+            if(apiKey) {
+                GEMINI_API_KEY_VAL = apiKey;
+                localStorage.setItem('GEMINI_API_KEY', apiKey);
+            }
+            toggleSettings();
+            alert("設定を保存しました。反映させるためページをリロードしてください。");
+            location.reload();
+        }
+        
+        // ★追加機能: 間違ったキーを消去するボタン用
+        function clearCache() {
+            localStorage.removeItem('GEMINI_API_KEY');
+            alert("保存されたキーを削除しました。ページをリロードします。");
+            location.reload();
+        }
+
+        initCamera();
+    </script>
+</body>
+</html>
