@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Shelf Analysis Mobile (Fixed)</title>
+    <title>Shelf Analysis Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { touch-action: manipulation; }
@@ -11,25 +11,63 @@
             background: rgba(255, 255, 255, 0.95);
             backdrop-filter: blur(10px);
         }
+        /* スライダーの見た目調整 */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100%;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 20px;
+            width: 20px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -8px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+        }
     </style>
 </head>
 <body class="bg-gray-900 h-screen w-screen overflow-hidden relative text-white">
 
     <script>
-        const DEFAULT_API_KEY = ""; // コードには書かず、画面の「設定」から入力してください
+        const DEFAULT_API_KEY = ""; // 画面の「設定」から入力してください
         const GAS_DEPLOY_URL = "https://script.google.com/macros/s/AKfycbxuWQQ7eAGRgsj8rMtFeop1PwgG0SEde7xUzTMZmzY-aKV9RA2wcB60oOOfbAjn9PQ/exec"; 
     </script>
-    <video id="camera-feed" autoplay playsinline class="absolute top-0 left-0 w-full h-full object-cover z-0"></video>
+    <video id="camera-feed" autoplay playsinline class="absolute top-0 left-0 w-full h-full object-cover z-0 transition-all duration-100"></video>
 
     <div class="absolute inset-0 z-10 flex flex-col justify-between pointer-events-none">
-        <div class="p-4 bg-gradient-to-b from-black/60 to-transparent pointer-events-auto flex justify-between items-center">
-            <h1 class="text-lg font-bold tracking-wider">SHELF SCAN</h1>
-            <div class="flex gap-2">
-                <button onclick="switchCamera()" class="text-xs bg-gray-700/80 border border-gray-500 px-3 py-1 rounded-full flex items-center gap-1">
+        
+        <div class="p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-auto">
+            <div class="flex justify-between items-center mb-2">
+                <h1 class="text-lg font-bold tracking-wider">SHELF SCAN</h1>
+                <div class="flex gap-2">
+                    <button onclick="toggleSettings()" class="text-xs bg-white/20 px-3 py-1 rounded-full border border-white/30">設定</button>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4 text-xs">
+                <button id="torch-btn" onclick="toggleTorch()" class="hidden bg-yellow-500/20 text-yellow-300 border border-yellow-500/50 px-3 py-1 rounded-full flex items-center gap-1 active:scale-95 transition-transform">
+                    <span>⚡</span> ライト
+                </button>
+                <button onclick="switchCamera()" class="bg-gray-700/50 border border-gray-500/50 px-3 py-1 rounded-full active:scale-95 transition-transform">
                     <span>↻</span> 切替
                 </button>
-                <button onclick="toggleSettings()" class="text-xs bg-white/20 px-3 py-1 rounded-full">設定</button>
             </div>
+        </div>
+
+        <div class="absolute right-4 top-1/2 transform -translate-y-1/2 h-48 w-8 pointer-events-auto flex flex-col items-center justify-center bg-black/30 rounded-full backdrop-blur-sm p-2">
+            <span class="text-xs mb-2">☀</span>
+            <input type="range" id="brightness-slider" min="1" max="3" step="0.1" value="1" 
+                class="transform -rotate-90 w-32 origin-center" oninput="adjustBrightness(this.value)">
         </div>
 
         <div class="p-6 pb-12 w-full flex flex-col items-center bg-gradient-to-t from-black/80 to-transparent pointer-events-auto">
@@ -59,15 +97,14 @@
     <div id="settings-modal" class="hidden absolute inset-0 z-50 bg-black/90 flex items-center justify-center p-6">
         <div class="bg-white text-gray-900 p-6 rounded-2xl w-full max-w-sm">
             <h3 class="font-bold text-lg mb-4">API設定</h3>
-            <p class="text-xs text-gray-500 mb-2">※コードには書き込まず、ここで入力してください</p>
             <label class="block text-xs mb-1">Gemini API Key</label>
             <input type="password" id="input-api-key" class="w-full border p-2 rounded mb-4 text-sm" placeholder="AIzaSy...">
             <div class="flex gap-2">
                 <button onclick="saveSettings()" class="flex-1 bg-blue-600 text-white py-2 rounded">保存</button>
                 <button onclick="document.getElementById('settings-modal').classList.add('hidden')" class="flex-1 bg-gray-200 text-gray-800 py-2 rounded">キャンセル</button>
             </div>
-            <div class="mt-4 border-t pt-4">
-                 <button onclick="clearCache()" class="w-full text-xs text-red-500 underline">設定をリセット(削除)</button>
+            <div class="mt-4 border-t pt-4 text-center">
+                 <button onclick="clearCache()" class="text-xs text-red-500 underline">設定リセット</button>
             </div>
         </div>
     </div>
@@ -78,27 +115,31 @@
         const video = document.getElementById('camera-feed');
         const canvas = document.getElementById('capture-canvas');
         const statusMsg = document.getElementById('status-msg');
+        const torchBtn = document.getElementById('torch-btn');
         
         let GEMINI_API_KEY_VAL = localStorage.getItem('GEMINI_API_KEY') || DEFAULT_API_KEY;
         let GAS_DEPLOY_URL_VAL = localStorage.getItem('GAS_DEPLOY_URL') || GAS_DEPLOY_URL;
         
-        // カメラ設定用変数
         let currentStream = null;
-        let useFrontCamera = false; // 初期値は背面カメラ(false)
+        let useFrontCamera = false;
+        let track = null;
+        let isTorchOn = false;
+        let currentBrightness = 1;
 
-        // ★修正: カメラ初期化ロジック (背面カメラを強制的に狙う)
+        // 初期化
         async function initCamera() {
-            // 既存のストリームがあれば停止
             if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
+                currentStream.getTracks().forEach(t => t.stop());
             }
 
+            // 解像度を「理想はフルHD、ダメならHD」と少し緩める
             const constraints = {
                 video: {
-                    // ここでイン/アウトを切り替え
-                    facingMode: useFrontCamera ? "user" : { exact: "environment" },
-                    width: { ideal: 1920 },
-                    height: { ideal: 1080 }
+                    facingMode: useFrontCamera ? "user" : "environment",
+                    width: { ideal: 1920 }, 
+                    height: { ideal: 1080 },
+                    // ライト制御のための拡張設定
+                    advanced: [{ torch: false }] 
                 },
                 audio: false
             };
@@ -107,39 +148,57 @@
                 const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 currentStream = stream;
                 video.srcObject = stream;
-                statusMsg.innerText = useFrontCamera ? "インカメラ" : "アウトカメラ(高画質)";
-            } catch (err) {
-                console.warn("High-res/Exact back camera failed, trying fallback...", err);
                 
-                // 厳密な指定(exact)で失敗した場合のフォールバック（PCや一部Android用）
-                try {
-                    const fallbackConstraints = {
-                        video: {
-                            facingMode: useFrontCamera ? "user" : "environment" // exactを外す
-                        },
-                        audio: false
-                    };
-                    const stream = await navigator.mediaDevices.getUserMedia(fallbackConstraints);
-                    currentStream = stream;
-                    video.srcObject = stream;
-                    statusMsg.innerText = "カメラ準備OK (標準画質)";
-                } catch (err2) {
-                    console.error("Camera Error:", err2);
-                    statusMsg.innerHTML = "<span class='text-red-400'>カメラ起動失敗。<br>HTTPS接続を確認してください。</span>";
+                // トラック取得（ライト制御用）
+                track = stream.getVideoTracks()[0];
+                
+                // ライト(トーチ)機能が使えるかチェック
+                const capabilities = track.getCapabilities();
+                if (capabilities.torch) {
+                    torchBtn.classList.remove('hidden');
+                    isTorchOn = false;
+                } else {
+                    torchBtn.classList.add('hidden');
                 }
+
+                statusMsg.innerText = useFrontCamera ? "インカメラ" : "カメラOK";
+            } catch (err) {
+                console.error(err);
+                statusMsg.innerHTML = "<span class='text-red-400'>カメラエラー。HTTPS接続を確認してください。</span>";
             }
         }
 
-        // ★追加: カメラ切り替え関数
+        // ライト切り替え
+        async function toggleTorch() {
+            if (!track) return;
+            isTorchOn = !isTorchOn;
+            try {
+                await track.applyConstraints({
+                    advanced: [{ torch: isTorchOn }]
+                });
+                torchBtn.className = isTorchOn 
+                    ? "bg-yellow-500 text-white border border-yellow-600 px-3 py-1 rounded-full flex items-center gap-1 active:scale-95 transition-transform shadow-lg shadow-yellow-500/50"
+                    : "bg-yellow-500/20 text-yellow-300 border border-yellow-500/50 px-3 py-1 rounded-full flex items-center gap-1 active:scale-95 transition-transform";
+            } catch (err) {
+                console.error("ライト制御エラー:", err);
+                statusMsg.innerText = "ライト点灯不可";
+            }
+        }
+
+        // デジタル明るさ調整 (スライダー)
+        function adjustBrightness(val) {
+            currentBrightness = val;
+            video.style.filter = `brightness(${val})`;
+        }
+
         function switchCamera() {
-            useFrontCamera = !useFrontCamera; // フラグを反転
-            initCamera(); // 再起動
+            useFrontCamera = !useFrontCamera;
+            initCamera();
         }
 
         async function captureAndAnalyze() {
-            // APIキーチェック
             if (!GEMINI_API_KEY_VAL || GEMINI_API_KEY_VAL.length < 10) {
-                alert("APIキーが設定されていません。右上の「設定」から入力してください。");
+                alert("APIキー設定が必要です。");
                 toggleSettings();
                 return;
             }
@@ -152,7 +211,12 @@
                 canvas.width = video.videoWidth;
                 canvas.height = video.videoHeight;
                 const ctx = canvas.getContext('2d');
+                
+                // 描画時に明るさ補正を反映させる
+                ctx.filter = `brightness(${currentBrightness})`;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                ctx.filter = 'none'; // リセット
+
                 const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
                 const resultJson = await callGemini(base64Image);
@@ -161,11 +225,8 @@
 
             } catch (error) {
                 console.error(error);
-                statusMsg.innerHTML = `<span class='text-red-400'>エラー: ${error.message}</span>`;
-                if(error.message.includes('403')) {
-                     alert("認証エラー(403)。APIキーが無効です。設定から正しいキーを入力し直してください。");
-                     toggleSettings();
-                }
+                statusMsg.innerHTML = `<span class='text-red-400'>Error: ${error.message}</span>`;
+                if(error.message.includes('403')) alert("APIキーが無効です(403)");
             } finally {
                 statusMsg.innerText = "待機中";
                 document.getElementById('shutter-btn').disabled = false;
@@ -174,14 +235,13 @@
         }
 
         async function callGemini(base64Image) {
-            // ★最新モデル指定
             const model = "gemini-1.5-flash"; 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY_VAL}`;
 
             const promptText = `
-            この画像はスーパーの商品棚です。認識できる全商品をリストアップしてください。
-            以下のJSON形式のみを返してください。マークダウンは不要です。
-            [ { "name": "商品名", "price": "価格(なければ不明)", "condition": "OK" または "乱れあり" } ]
+            画像内のスーパーの商品棚にある全商品をリストアップしてください。
+            JSON形式で返してください:
+            [ { "name": "商品名", "price": "価格", "condition": "OK" または "乱れ" } ]
             `;
 
             const body = {
@@ -209,10 +269,8 @@
         function showResults(data) {
             const container = document.getElementById('result-content');
             container.innerHTML = '';
-            let messyCount = 0;
             data.forEach(item => {
-                const isMessy = item.condition === "乱れあり";
-                if(isMessy) messyCount++;
+                const isMessy = item.condition.includes("乱れ");
                 const html = `
                 <div class="bg-gray-100 p-4 rounded-xl flex justify-between items-center ${isMessy ? 'border-l-4 border-red-500 bg-red-50' : ''}">
                     <div><div class="font-bold text-gray-800">${item.name}</div><div class="text-sm text-gray-500">${item.price}</div></div>
@@ -237,8 +295,6 @@
 
         function closeModal() {
             document.getElementById('result-modal').classList.add('hidden');
-            // モーダルを閉じたらカメラを再開（念の為）
-            if(!currentStream || !currentStream.active) initCamera();
         }
 
         function toggleSettings() {
@@ -259,21 +315,17 @@
                 localStorage.setItem('GEMINI_API_KEY', apiKey);
             }
             toggleSettings();
-            alert("設定を保存しました。");
+            alert("設定保存しました。");
             location.reload();
         }
 
         function clearCache() {
-            if(confirm("保存されたAPIキーを削除しますか？")) {
-                localStorage.removeItem('GEMINI_API_KEY');
-                alert("削除しました。");
-                location.reload();
-            }
+            localStorage.removeItem('GEMINI_API_KEY');
+            alert("リセットしました");
+            location.reload();
         }
 
-        // 初期化実行
         initCamera();
-
     </script>
 </body>
 </html>
