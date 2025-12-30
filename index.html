@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Shelf Analysis Final</title>
+    <title>Shelf Analysis Lite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { touch-action: manipulation; }
@@ -24,7 +24,7 @@
 <body class="bg-gray-900 h-screen w-screen overflow-hidden relative text-white">
 
     <script>
-        const DEFAULT_API_KEY = ""; // 設定画面から入力
+        const DEFAULT_API_KEY = ""; 
         const GAS_DEPLOY_URL = "https://script.google.com/macros/s/AKfycbxuWQQ7eAGRgsj8rMtFeop1PwgG0SEde7xUzTMZmzY-aKV9RA2wcB60oOOfbAjn9PQ/exec"; 
     </script>
 
@@ -33,7 +33,7 @@
     <div class="absolute inset-0 z-10 flex flex-col justify-between pointer-events-none">
         <div class="p-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-auto">
             <div class="flex justify-between items-center mb-2">
-                <h1 class="text-lg font-bold tracking-wider">SHELF SCAN</h1>
+                <h1 class="text-lg font-bold tracking-wider">SHELF SCAN LITE</h1>
                 <button onclick="toggleSettings()" class="text-xs bg-white/20 px-3 py-1 rounded-full border border-white/30">設定</button>
             </div>
             <div class="flex items-center gap-4 text-xs">
@@ -117,7 +117,7 @@
                 video.srcObject = stream;
                 track = stream.getVideoTracks()[0];
                 const capabilities = track.getCapabilities();
-                if (capabilities.torch) { torchBtn.classList.remove('hidden'); isTorchOn = false; } 
+                if (capabilities && capabilities.torch) { torchBtn.classList.remove('hidden'); isTorchOn = false; } 
                 else { torchBtn.classList.add('hidden'); }
                 statusMsg.innerText = "カメラOK";
             } catch (err) {
@@ -153,17 +153,23 @@
             document.getElementById('shutter-btn').classList.add('opacity-50', 'animate-pulse');
 
             try {
-                canvas.width = video.videoWidth;
-                canvas.height = video.videoHeight;
+                // ★修正点1: 解析用の画像サイズを小さくする (APIエラー400対策)
+                const sendWidth = 800; // 横幅800pxに固定
+                const scaleFactor = sendWidth / video.videoWidth;
+                const sendHeight = video.videoHeight * scaleFactor;
+
+                canvas.width = sendWidth;
+                canvas.height = sendHeight;
+
                 const ctx = canvas.getContext('2d');
-                ctx.filter = `brightness(${currentBrightness})`;
+                ctx.filter = `brightness(${currentBrightness})`; // 明るさ補正は維持
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 ctx.filter = 'none';
+
                 const base64Image = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
                 const resultJson = await callGemini(base64Image);
                 
-                // データが空の場合のチェック
                 if(!resultJson || resultJson.length === 0) {
                     throw new Error("商品は検出されませんでした");
                 }
@@ -173,12 +179,10 @@
 
             } catch (error) {
                 console.error(error);
-                // ★ここでエラーを画面に出す
                 alert("エラーが発生しました:\n" + error.message);
-                statusMsg.innerHTML = `<span class='text-red-400'>Error</span>`;
+                statusMsg.innerHTML = `<span class='text-red-400'>Error: ${error.message}</span>`;
             } finally {
-                // エラーでなければ待機中に戻す
-                if(statusMsg.innerText !== "Error") statusMsg.innerText = "待機中";
+                if(!statusMsg.innerHTML.includes("Error")) statusMsg.innerText = "待機中";
                 document.getElementById('shutter-btn').disabled = false;
                 document.getElementById('shutter-btn').classList.remove('opacity-50', 'animate-pulse');
             }
@@ -187,32 +191,60 @@
         async function callGemini(base64Image) {
             const model = "gemini-1.5-flash"; 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY_VAL}`;
-            const promptText = `この画像はスーパーの商品棚です。認識できる全商品をリストアップしてください。以下のJSON形式のみを返してください。マークダウン(backticks)は絶対に含めないでください。[{"name":"商品名","price":"価格","condition":"OK"または"乱れ"}]`;
+            
+            const promptText = `
+            この画像はスーパーの商品棚です。認識できる全商品をリストアップしてください。
+            以下のJSON形式のみを返してください。
+            [{"name":"商品名","price":"価格","condition":"OK"または"乱れ"}]
+            `;
 
             const body = {
-                contents: [{ parts: [{ text: promptText }, { inline_data: { mime_type: "image/jpeg", data: base64Image } }] }],
-                generationConfig: { response_mime_type: "application/json" }
+                contents: [{ 
+                    parts: [
+                        { text: promptText }, 
+                        { inline_data: { mime_type: "image/jpeg", data: base64Image } }
+                    ] 
+                }],
+                // ★修正点2: "response_mime_type" を削除 (Strictモードによる400エラー回避)
+                // safetySettingsを追加してブロック回避
+                safetySettings: [
+                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                ]
             };
 
             const response = await fetch(url, {
                 method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
             });
 
-            if (!response.ok) throw new Error(`API接続エラー: ${response.status}`);
+            if (!response.ok) {
+                // エラーの詳細を取得してみる
+                const errText = await response.text();
+                console.error("API Error Detail:", errText);
+                throw new Error(`API接続エラー: ${response.status}`);
+            }
             
             const data = await response.json();
             if (!data.candidates || !data.candidates[0].content) throw new Error("AIからの応答が空でした");
             
             let text = data.candidates[0].content.parts[0].text;
             
-            // ★重要: マークダウンの除去処理（JSONクリーナー）
+            // JSONクリーナー (マークダウン除去)
             text = text.replace(/```json/g, "").replace(/```/g, "").trim();
             
             try {
+                // 最初と最後が [ ] でない場合の保険
+                const start = text.indexOf('[');
+                const end = text.lastIndexOf(']');
+                if(start !== -1 && end !== -1) {
+                    text = text.substring(start, end + 1);
+                }
                 return JSON.parse(text);
             } catch (e) {
                 console.log("Raw text:", text);
-                throw new Error("AIデータの読み取りに失敗しました (JSON Parse Error)");
+                throw new Error("AIデータの読み取りに失敗しました (Parse Error)");
             }
         }
 
@@ -220,10 +252,10 @@
             const container = document.getElementById('result-content');
             container.innerHTML = '';
             data.forEach(item => {
-                const isMessy = item.condition.includes("乱れ");
+                const isMessy = item.condition && item.condition.includes("乱れ");
                 const html = `<div class="bg-gray-100 p-4 rounded-xl flex justify-between items-center ${isMessy ? 'border-l-4 border-red-500 bg-red-50' : ''}">
-                    <div><div class="font-bold text-gray-800">${item.name}</div><div class="text-sm text-gray-500">${item.price}</div></div>
-                    <div class="text-right"><span class="px-3 py-1 rounded-full text-xs font-bold ${isMessy ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'}">${item.condition}</span></div></div>`;
+                    <div><div class="font-bold text-gray-800">${item.name || "不明"}</div><div class="text-sm text-gray-500">${item.price || "不明"}</div></div>
+                    <div class="text-right"><span class="px-3 py-1 rounded-full text-xs font-bold ${isMessy ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'}">${item.condition || "OK"}</span></div></div>`;
                 container.innerHTML += html;
             });
             document.getElementById('item-count').innerText = `${data.length} Items`;
