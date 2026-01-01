@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Shelf Analysis 2.5 Pro</title>
+    <title>Shelf Analysis 3.0 Pro image preview</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { touch-action: manipulation; }
@@ -199,8 +199,8 @@
         }
 
         async function callGemini(base64Image) {
-            // ★★★★ モデル指定を2.5に確定 ★★★★
-            const model = "gemini-3-pro-preview"; 
+            // ★★★★ モデル指定を3.0に確定 ★★★★
+            const model = "gemini-3-pro-image-preview"; 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY_VAL}`;
             
             const promptText = `
@@ -230,7 +230,7 @@
 
             if (!response.ok) {
                 const status = response.status;
-                if (status === 404) throw new Error("モデル(2.5)が見つからないかAPIキーが無効です(404)");
+                if (status === 404) throw new Error("モデル(3.0)が見つからないかAPIキーが無効です(404)");
                 if (status === 400) throw new Error("リクエストエラー(400)");
                 if (status === 403) throw new Error("アクセス権限エラー(403)");
                 throw new Error(`API接続エラー: ${status}`);
