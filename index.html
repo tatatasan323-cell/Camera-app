@@ -200,7 +200,7 @@
 
         async function callGemini(base64Image) {
             // ★★★★ モデル指定を2.5に確定 ★★★★
-            const model = "gemini-2.5-pro"; 
+            const model = "gemini-2.5-flash"; 
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY_VAL}`;
             
             const promptText = `
